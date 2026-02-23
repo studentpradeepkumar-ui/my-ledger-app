@@ -4,7 +4,7 @@ import csv
 import urllib.parse
 from datetime import datetime, date
 
-from flask import Flask, request, redirect, url_for, flash, send_file, render_template_string
+from flask import Flask, request, redirect, url_for, flash, send_file, render_template_string, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -37,9 +37,10 @@ class User(UserMixin, db.Model):
 
 class Customer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False) # LINKED TO ADMIN
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     name = db.Column(db.String(160), nullable=False)
-    phone = db.Column(db.String(30), nullable=True)
+    phone = db.Column(db.String(30), nullable=False) 
+    pin = db.Column(db.String(10), nullable=False, default="1234") 
     address = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     transactions = db.relationship("Transaction", backref="customer", lazy=True, cascade="all, delete-orphan")
@@ -47,10 +48,11 @@ class Customer(db.Model):
 class Transaction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     customer_id = db.Column(db.Integer, db.ForeignKey("customer.id"), nullable=False)
-    ttype = db.Column(db.String(20), nullable=False)  # CHARGE or PAYMENT
-    amount = db.Column(db.Float, nullable=False)
-    note = db.Column(db.String(255), nullable=True)
+    total_amount = db.Column(db.Float, nullable=False, default=0.0) 
+    paid_amount = db.Column(db.Float, nullable=False, default=0.0)  
+    note = db.Column(db.String(255), nullable=True)                 
     ref_no = db.Column(db.String(100), nullable=True)  
+    tracking_url = db.Column(db.String(500), nullable=True) 
     txn_date = db.Column(db.Date, default=date.today, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -59,17 +61,18 @@ def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 def customer_balance(c: Customer) -> float:
-    charges = sum(t.amount for t in c.transactions if t.ttype == "CHARGE")
-    payments = sum(t.amount for t in c.transactions if t.ttype == "PAYMENT")
-    return round(charges - payments, 2)
+    total_billed = sum(t.total_amount for t in c.transactions)
+    total_paid = sum(t.paid_amount for t in c.transactions)
+    return round(total_billed - total_paid, 2)
 
 def running_balances(transactions):
     txns = sorted(transactions, key=lambda x: (x.txn_date, x.id))
     bal = 0.0
     out = []
     for t in txns:
-        bal += t.amount if t.ttype == "CHARGE" else -t.amount
-        out.append((t, round(bal, 2)))
+        entry_due = t.total_amount - t.paid_amount
+        bal += entry_due
+        out.append((t, entry_due, round(bal, 2)))
     return out
 
 with app.app_context():
@@ -91,17 +94,20 @@ BASE = """
 <body class="bg-light">
 <nav class="navbar navbar-dark bg-dark">
   <div class="container">
-    <a class="navbar-brand d-flex align-items-center" href="{{ url_for('customers') }}">
-      <img src="https://i.postimg.cc/rwVBbrCf/Chat-GPT-Image-Feb-23-2026-06-20-16-PM.png" alt="Manglam Logo">
+    <a class="navbar-brand d-flex align-items-center" href="/">
+      <img src="https://i.postimg.cc/placeholder-logo.png" alt="Manglam Logo">
       Manglam Online Services
     </a>
-    {% if authed %}
-      <div class="d-flex gap-2 align-items-center">
-        <span class="text-light me-2">Welcome, {{ current_user.username }}</span>
+    <div class="d-flex gap-2 align-items-center">
+      {% if current_user.is_authenticated %}
+        <span class="text-light me-2 d-none d-md-inline">Admin: {{ current_user.username }}</span>
         <a class="btn btn-outline-warning btn-sm" href="{{ url_for('export_customers') }}">Export CSV</a>
         <a class="btn btn-outline-danger btn-sm" href="{{ url_for('logout') }}">Logout</a>
-      </div>
-    {% endif %}
+      {% elif session.get('customer_id') %}
+        <span class="text-light me-2 d-none d-md-inline">Customer Portal</span>
+        <a class="btn btn-outline-danger btn-sm" href="{{ url_for('portal_logout') }}">Logout</a>
+      {% endif %}
+    </div>
   </div>
 </nav>
 <div class="container py-4">
@@ -118,28 +124,22 @@ BASE = """
 </html>
 """
 
-def page(body, authed=False):
-    return render_template_string(BASE, body=body, authed=authed, current_user=current_user)
+def page(body):
+    return render_template_string(BASE, body=body, current_user=current_user, session=session)
 
-# ---------------- Setup/Login ----------------
+# ---------------- Setup/Login (Admin) ----------------
 @app.get("/setup")
 def setup():
     body = """
-    <div class="row justify-content-center">
-      <div class="col-md-6 col-lg-5">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h4 class="mb-3">Register New Admin</h4>
-            <form method="post">
-              <div class="mb-3"><label class="form-label">Username</label><input class="form-control" name="username" required></div>
-              <div class="mb-3"><label class="form-label">Password</label><input class="form-control" type="password" name="password" required></div>
-              <button class="btn btn-primary w-100">Create Account</button>
-            </form>
-            <div class="mt-3"><a href="{{ url_for('login') }}">Already have an account? Login here</a></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div class="row justify-content-center"><div class="col-md-6 col-lg-5"><div class="card shadow-sm"><div class="card-body">
+      <h4 class="mb-3">Register New Admin</h4>
+      <form method="post">
+        <div class="mb-3"><label class="form-label">Username</label><input class="form-control" name="username" required></div>
+        <div class="mb-3"><label class="form-label">Password</label><input class="form-control" type="password" name="password" required></div>
+        <button class="btn btn-primary w-100">Create Account</button>
+      </form>
+      <div class="mt-3"><a href="{{ url_for('login') }}">Already have an account? Login here</a></div>
+    </div></div></div></div>
     """
     return page(body)
 
@@ -147,39 +147,36 @@ def setup():
 def setup_post():
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "").strip()
-    if not username or not password:
-        flash("Username and Password are required.", "danger")
-        return redirect(url_for("setup"))
     if User.query.filter_by(username=username).first():
-        flash("Username already exists. Choose another.", "danger")
+        flash("Username already exists.", "danger")
         return redirect(url_for("setup"))
-        
     u = User(username=username, password_hash=generate_password_hash(password))
     db.session.add(u)
     db.session.commit()
-    flash("Account created! You can now log in.", "success")
+    flash("Account created! Log in below.", "success")
     return redirect(url_for("login"))
 
 @app.get("/login")
 def login():
     body = """
-    <div class="row justify-content-center">
-      <div class="col-md-6 col-lg-5">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h4 class="mb-3">Login</h4>
-            <form method="post">
-              <div class="mb-3"><label class="form-label">Username</label><input class="form-control" name="username" required></div>
-              <div class="mb-3"><label class="form-label">Password</label><input class="form-control" type="password" name="password" required></div>
-              <button class="btn btn-primary w-100">Login</button>
-            </form>
-            <div class="mt-3"><a href="{{ url_for('setup') }}">Create a new Admin account</a></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div class="row justify-content-center"><div class="col-md-6 col-lg-5">
+      <div class="card shadow-sm mb-4"><div class="card-body">
+        <h4 class="mb-3">Admin Login</h4>
+        <form method="post">
+          <div class="mb-3"><label class="form-label">Username</label><input class="form-control" name="username" required></div>
+          <div class="mb-3"><label class="form-label">Password</label><input class="form-control" type="password" name="password" required></div>
+          <button class="btn btn-primary w-100">Admin Login</button>
+        </form>
+        <div class="mt-3"><a href="{{ url_for('setup') }}">Create Admin Account</a></div>
+      </div></div>
+      <div class="card shadow-sm bg-primary text-white"><div class="card-body text-center">
+        <h5>Are you a Customer?</h5>
+        <p class="mb-2">View your account balance and history.</p>
+        <a href="{{ url_for('portal_login') }}" class="btn btn-light w-100">Customer Login</a>
+      </div></div>
+    </div></div>
     """
-    return page(render_template_string(body), authed=False)
+    return page(body)
 
 @app.post("/login")
 def login_post():
@@ -198,17 +195,86 @@ def logout():
     logout_user()
     return redirect(url_for("login"))
 
-# ---------------- Customers ----------------
+# ---------------- Customer Portal ----------------
+@app.route("/portal/login", methods=["GET", "POST"])
+def portal_login():
+    if request.method == "POST":
+        phone = request.form.get("phone", "").strip()
+        pin = request.form.get("pin", "").strip()
+        c = Customer.query.filter_by(phone=phone, pin=pin).first()
+        if c:
+            session['customer_id'] = c.id
+            return redirect(url_for("portal_dashboard"))
+        else:
+            flash("Invalid Mobile Number or PIN. Please ask shop owner.", "danger")
+    body = """
+    <div class="row justify-content-center"><div class="col-md-6 col-lg-5"><div class="card shadow-sm border-primary"><div class="card-body">
+      <h4 class="mb-3 text-primary">Customer Portal Login</h4>
+      <form method="post">
+        <div class="mb-3"><label class="form-label">Mobile Number</label><input class="form-control" name="phone" placeholder="e.g. 9876543210" required></div>
+        <div class="mb-3"><label class="form-label">4-Digit PIN</label><input class="form-control" type="password" name="pin" placeholder="Default is usually 1234" required></div>
+        <button class="btn btn-primary w-100">View My Khata</button>
+      </form>
+      <div class="mt-3 text-center"><a href="{{ url_for('login') }}">Back to Admin Login</a></div>
+    </div></div></div></div>
+    """
+    return page(body)
+
+@app.get("/portal")
+def portal_dashboard():
+    c_id = session.get("customer_id")
+    if not c_id: return redirect(url_for("portal_login"))
+    c = db.session.get(Customer, c_id)
+    if not c:
+        session.pop("customer_id", None)
+        return redirect(url_for("portal_login"))
+
+    bal = customer_balance(c)
+    badge = (f'<span class="badge text-bg-danger fs-5">Amount Due: ₹ {bal}</span>' if bal > 0 else f'<span class="badge text-bg-success fs-5">Advance: ₹ {-bal}</span>' if bal < 0 else f'<span class="badge text-bg-secondary fs-5">Balanced: ₹ 0</span>')
+
+    txns_rb = running_balances(c.transactions)
+    rows = []
+    for t, entry_due, rb in txns_rb:
+        ref_display = t.ref_no or "-"
+        if t.ref_no and t.tracking_url:
+            ref_display = f'<a href="{t.tracking_url}" target="_blank" class="text-primary fw-bold" title="Click to Track Status">{t.ref_no} 🔗</a>'
+            
+        rows.append(f'<tr><td>{t.txn_date}</td><td>{t.note or "-"}</td><td>{ref_display}</td><td>₹ {t.total_amount:.2f}</td><td class="text-success">₹ {t.paid_amount:.2f}</td><td class="text-danger">₹ {entry_due:.2f}</td><td><strong>₹ {rb}</strong></td></tr>')
+
+    body = f"""
+    <div class="card shadow-sm mb-4 bg-light border-0">
+      <div class="card-body text-center">
+        <h2 class="mb-1">Namaste, {c.name}</h2>
+        <p class="text-muted mb-3">Shop: {c.admin.username}</p>
+        <div>{badge}</div>
+      </div>
+    </div>
+    
+    <h4 class="mb-3">Your Transaction History</h4>
+    <div class="card shadow-sm"><div class="table-responsive"><table class="table table-striped mb-0">
+      <thead><tr><th>Date</th><th>Work Done</th><th>Ref No (Status)</th><th>Total Bill</th><th>Paid</th><th>Entry Due</th><th>Total Balance</th></tr></thead>
+      <tbody>{''.join(rows) if rows else '<tr><td colspan="7" class="text-center text-muted py-4">No transactions yet</td></tr>'}</tbody>
+    </table></div></div>
+    """
+    return page(body)
+
+@app.get("/portal/logout")
+def portal_logout():
+    session.pop("customer_id", None)
+    return redirect(url_for("portal_login"))
+
+# ---------------- Admin Customers ----------------
 @app.get("/")
-@login_required
 def home():
-    return redirect(url_for("customers"))
+    if current_user.is_authenticated: return redirect(url_for("customers"))
+    if session.get('customer_id'): return redirect(url_for("portal_dashboard"))
+    return redirect(url_for("login"))
 
 @app.get("/customers")
 @login_required
 def customers():
     q = request.args.get("q", "").strip()
-    query = Customer.query.filter_by(user_id=current_user.id) # ONLY SHOW LOGGED IN USER'S CUSTOMERS
+    query = Customer.query.filter_by(user_id=current_user.id)
     if q:
         like = f"%{q}%"
         query = query.filter(db.or_(Customer.name.ilike(like), Customer.phone.ilike(like)))
@@ -219,12 +285,8 @@ def customers():
     for c in customers_list:
         bal = customer_balance(c)
         total_due += bal
-        badge = (
-            f'<span class="badge text-bg-danger">₹ {bal}</span>' if bal > 0 else
-            f'<span class="badge text-bg-success">Advance ₹ {-bal}</span>' if bal < 0 else
-            f'<span class="badge text-bg-secondary">₹ 0</span>'
-        )
-        rows.append(f'<tr><td>{c.id}</td><td>{c.name}</td><td>{c.phone or ""}</td><td>{badge}</td><td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{url_for("customer_detail", customer_id=c.id)}">Open</a></td></tr>')
+        badge = (f'<span class="badge text-bg-danger">₹ {bal}</span>' if bal > 0 else f'<span class="badge text-bg-success">Advance ₹ {-bal}</span>' if bal < 0 else f'<span class="badge text-bg-secondary">₹ 0</span>')
+        rows.append(f'<tr><td>{c.name}</td><td>{c.phone}</td><td>{badge}</td><td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{url_for("customer_detail", customer_id=c.id)}">Open</a></td></tr>')
 
     body = f"""
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -236,13 +298,13 @@ def customers():
       <div class="col-md-2"><button class="btn btn-primary w-100">Search</button></div>
       <div class="col-md-2"><a class="btn btn-outline-secondary w-100" href="{url_for('customers')}">Reset</a></div>
     </form>
-    <div class="alert alert-info">Total Due (Your Customers): <strong>₹ {round(total_due,2)}</strong></div>
+    <div class="alert alert-info">Total Market Due: <strong>₹ {round(total_due,2)}</strong></div>
     <div class="card shadow-sm"><div class="table-responsive"><table class="table table-striped mb-0">
-      <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Balance/Due</th><th></th></tr></thead>
-      <tbody>{''.join(rows) if rows else '<tr><td colspan="5" class="text-center text-muted py-4">No customers found</td></tr>'}</tbody>
+      <thead><tr><th>Name</th><th>Phone</th><th>Balance/Due</th><th></th></tr></thead>
+      <tbody>{''.join(rows) if rows else '<tr><td colspan="4" class="text-center text-muted py-4">No customers found</td></tr>'}</tbody>
     </table></div></div>
     """
-    return page(body, authed=True)
+    return page(body)
 
 @app.get("/customer/add")
 @login_required
@@ -251,24 +313,25 @@ def customer_add():
     <div class="card shadow-sm"><div class="card-body"><h4 class="mb-3">Add Customer</h4>
     <form method="post">
       <div class="mb-3"><label class="form-label">Name *</label><input class="form-control" name="name" required></div>
-      <div class="mb-3"><label class="form-label">Phone</label><input class="form-control" name="phone"></div>
+      <div class="mb-3"><label class="form-label">Phone (Login ID) *</label><input class="form-control" name="phone" required></div>
+      <div class="mb-3"><label class="form-label">4-Digit PIN (For Customer Login) *</label><input class="form-control" name="pin" value="1234" required></div>
       <div class="mb-3"><label class="form-label">Address</label><input class="form-control" name="address"></div>
       <div class="d-flex gap-2"><button class="btn btn-primary">Create</button><a class="btn btn-outline-secondary" href="{url_for('customers')}">Back</a></div>
     </form></div></div>
     """
-    return page(body, authed=True)
+    return page(body)
 
 @app.post("/customer/add")
 @login_required
 def customer_add_post():
     name = request.form.get("name", "").strip()
     phone = request.form.get("phone", "").strip()
+    pin = request.form.get("pin", "1234").strip()
     address = request.form.get("address", "").strip()
-    if not name:
-        flash("Customer name is required.", "danger")
+    if not name or not phone:
+        flash("Name and Phone are required.", "danger")
         return redirect(url_for("customer_add"))
-    # LINK THE CUSTOMER TO THE CURRENT LOGGED-IN USER
-    c = Customer(name=name, phone=phone or None, address=address or None, user_id=current_user.id)
+    c = Customer(name=name, phone=phone, pin=pin, address=address or None, user_id=current_user.id)
     db.session.add(c)
     db.session.commit()
     flash("Customer added successfully.", "success")
@@ -277,45 +340,61 @@ def customer_add_post():
 @app.get("/customer/<int:customer_id>")
 @login_required
 def customer_detail(customer_id):
-    # SECURITY: Ensure this customer belongs to the logged-in user
     c = Customer.query.filter_by(id=customer_id, user_id=current_user.id).first()
-    if not c:
-        flash("Customer not found or access denied.", "danger")
-        return redirect(url_for("customers"))
+    if not c: return redirect(url_for("customers"))
 
     bal = customer_balance(c)
     badge = (f'<span class="badge text-bg-danger fs-6">Due: ₹ {bal}</span>' if bal > 0 else f'<span class="badge text-bg-success fs-6">Advance: ₹ {-bal}</span>' if bal < 0 else f'<span class="badge text-bg-secondary fs-6">Balanced: ₹ 0</span>')
 
-    wa_btn = ""
-    if bal > 0 and c.phone:
+    phone_clean = ""
+    if c.phone:
         phone_clean = ''.join(filter(str.isdigit, c.phone))
         if len(phone_clean) == 10: phone_clean = "91" + phone_clean
-        msg = f"Namaste {c.name},\nManglam Online Services par aapka bakaya balance ₹ {bal} hai. Kripya samay par jama karein. \nDhanyawad!"
+
+    wa_btn = ""
+    if bal > 0 and phone_clean:
+        # NAYA HINDI MESSAGE (TOTAL DUE)
+        msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपके खाते की कुल बकाया राशि: *₹{bal}* है।\n\nआप नीचे दिए गए लिंक पर अपना पिन डालकर अपना पूरा खाता चेक कर सकते हैं:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन (PIN): {c.pin}\n\nकृपया समय पर भुगतान करें।\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
         wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(msg)}"
-        wa_btn = f'<a class="btn btn-sm btn-success ms-2" href="{wa_link}" target="_blank">📲 WhatsApp Karein</a>'
+        wa_btn = f'<a class="btn btn-sm btn-success ms-2" href="{wa_link}" target="_blank">📲 Send Total Due</a>'
 
     txns_rb = running_balances(c.transactions)
     rows = []
-    for t, rb in txns_rb:
-        tbadge = '<span class="badge text-bg-warning">CHARGE</span>' if t.ttype == "CHARGE" else '<span class="badge text-bg-info">PAYMENT</span>'
-        rows.append(f'<tr><td>{t.txn_date}</td><td>{tbadge}</td><td>₹ {t.amount:.2f}</td><td>{t.ref_no or ""}</td><td>{t.note or ""}</td><td>₹ {rb}</td><td class="text-end"><form method="post" action="{url_for("txn_delete", txn_id=t.id)}" onsubmit="return confirm(\'Delete this entry?\');"><button class="btn btn-sm btn-outline-danger">Delete</button></form></td></tr>')
+    for t, entry_due, rb in txns_rb:
+        entry_wa_btn = ""
+        if phone_clean:
+            # NAYA HINDI MESSAGE (WORK SLIP)
+            entry_msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपका कार्य सफलतापूर्वक कर दिया गया है। कार्य का विवरण:\n\n📝 *कार्य (Work):* {t.note or 'N/A'}\n🧾 *कुल बिल (Total Bill):* ₹{t.total_amount}\n✅ *जमा राशि (Paid):* ₹{t.paid_amount}\n⏳ *इस कार्य का बकाया (Due):* ₹{entry_due}\n🔖 *रेफरेंस नंबर (Ref No):* {t.ref_no or 'N/A'}"
+            
+            if t.tracking_url:
+                entry_msg += f"\n🌐 *स्टेटस चेक करें:* {t.tracking_url}"
+                
+            entry_msg += f"\n\n📊 *आपका कुल बकाया (Total Balance):* ₹{rb}\n\nअपना पूरा खाता यहाँ देखें:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन: {c.pin}\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
+            
+            e_wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(entry_msg)}"
+            entry_wa_btn = f'<a class="btn btn-sm btn-outline-success mt-1 w-100" href="{e_wa_link}" target="_blank">📲 WhatsApp Slip</a>'
+            
+        ref_display = t.ref_no or "-"
+        if t.ref_no and t.tracking_url:
+            ref_display = f'<a href="{t.tracking_url}" target="_blank" title="Check Status">{t.ref_no}</a>'
+            
+        rows.append(f'<tr><td>{t.txn_date}</td><td>{t.note or "-"}</td><td>{ref_display}</td><td>₹ {t.total_amount:.2f}</td><td class="text-success">₹ {t.paid_amount:.2f}</td><td class="text-danger">₹ {entry_due:.2f}</td><td><strong>₹ {rb}</strong></td><td class="text-end"><form method="post" action="{url_for("txn_delete", txn_id=t.id)}" onsubmit="return confirm(\'Delete this entry?\');"><button class="btn btn-sm btn-outline-danger w-100">Del</button></form>{entry_wa_btn}</td></tr>')
 
     body = f"""
     <div class="d-flex align-items-center justify-content-between mb-3">
-      <div><h3 class="m-0">{c.name}</h3><div class="text-muted">{c.phone or ""}{" | " + c.address if c.address else ""}</div></div>
-      <div class="text-end"><div class="mb-2">{badge} {wa_btn}</div><a class="btn btn-sm btn-success" href="{url_for('txn_add', customer_id=c.id)}">+ Add Entry</a>
-        <form class="d-inline" method="post" action="{url_for('customer_delete', customer_id=c.id)}" onsubmit="return confirm('Delete customer? All transactions will be deleted.');">
-          <button class="btn btn-sm btn-outline-danger">Delete</button>
-        </form>
+      <div>
+        <h3 class="m-0">{c.name}</h3>
+        <div class="text-muted">Phone: {c.phone} | PIN: <strong>{c.pin}</strong></div>
       </div>
+      <div class="text-end"><div class="mb-2">{badge} {wa_btn}</div><a class="btn btn-sm btn-primary" href="{url_for('txn_add', customer_id=c.id)}">+ Add Entry / Work</a></div>
     </div>
-    <div class="card shadow-sm"><div class="table-responsive"><table class="table table-striped mb-0">
-      <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Ref/App No</th><th>Note</th><th>Running Balance</th><th></th></tr></thead>
-      <tbody>{''.join(rows) if rows else '<tr><td colspan="7" class="text-center text-muted py-4">No entries yet</td></tr>'}</tbody>
+    <div class="card shadow-sm"><div class="table-responsive"><table class="table table-striped align-middle mb-0">
+      <thead><tr><th>Date</th><th>Work Done</th><th>Ref No (Status)</th><th>Total Bill</th><th>Paid</th><th>Due</th><th>Total Balance</th><th>Actions</th></tr></thead>
+      <tbody>{''.join(rows) if rows else '<tr><td colspan="8" class="text-center text-muted py-4">No entries yet</td></tr>'}</tbody>
     </table></div></div>
     <div class="mt-3"><a class="btn btn-outline-secondary" href="{url_for('customers')}">Back</a></div>
     """
-    return page(body, authed=True)
+    return page(body)
 
 @app.post("/customer/<int:customer_id>/delete")
 @login_required
@@ -324,10 +403,8 @@ def customer_delete(customer_id):
     if c:
         db.session.delete(c)
         db.session.commit()
-        flash("Customer deleted.", "success")
     return redirect(url_for("customers"))
 
-# ---------------- Transactions ----------------
 @app.get("/customer/<int:customer_id>/txn/add")
 @login_required
 def txn_add(customer_id):
@@ -337,16 +414,17 @@ def txn_add(customer_id):
     <div class="card shadow-sm"><div class="card-body"><h4 class="mb-3">Add Entry - {c.name}</h4>
     <form method="post">
       <div class="row g-3">
-        <div class="col-md-4"><label class="form-label">Type</label><select class="form-select" name="ttype" required><option value="CHARGE">CHARGE</option><option value="PAYMENT">PAYMENT</option></select></div>
-        <div class="col-md-4"><label class="form-label">Amount (₹)</label><input class="form-control" name="amount" required></div>
-        <div class="col-md-4"><label class="form-label">Date</label><input class="form-control" type="date" name="txn_date"></div>
-        <div class="col-md-6"><label class="form-label">Ref/App No (optional)</label><input class="form-control" name="ref_no"></div>
-        <div class="col-md-6"><label class="form-label">Note (optional)</label><input class="form-control" name="note"></div>
+        <div class="col-md-12"><label class="form-label">Work Done (क्या काम कराया?)</label><input class="form-control" name="note" placeholder="e.g. Pan Card Apply" required></div>
+        <div class="col-md-6"><label class="form-label text-danger">Total Bill (कुल बिल ₹) *</label><input class="form-control" name="total_amount" value="0" required></div>
+        <div class="col-md-6"><label class="form-label text-success">Amount Paid (कितना जमा किया ₹) *</label><input class="form-control" name="paid_amount" value="0" required></div>
+        <div class="col-md-6"><label class="form-label">Reference / App No (Optional)</label><input class="form-control" name="ref_no" placeholder="e.g. ACK-123456"></div>
+        <div class="col-md-6"><label class="form-label">Status Check Website URL (Optional)</label><input class="form-control" name="tracking_url" placeholder="e.g. https://tin.tin.nsdl.com/pantan/StatusTrack.html"></div>
+        <div class="col-md-6"><label class="form-label">Date</label><input class="form-control" type="date" name="txn_date"></div>
       </div>
-      <div class="d-flex gap-2 mt-4"><button class="btn btn-primary">Save</button><a class="btn btn-outline-secondary" href="{url_for('customer_detail', customer_id=c.id)}">Back</a></div>
+      <div class="d-flex gap-2 mt-4"><button class="btn btn-primary">Save Entry</button><a class="btn btn-outline-secondary" href="{url_for('customer_detail', customer_id=c.id)}">Back</a></div>
     </form></div></div>
     """
-    return page(body, authed=True)
+    return page(body)
 
 @app.post("/customer/<int:customer_id>/txn/add")
 @login_required
@@ -354,38 +432,36 @@ def txn_add_post(customer_id):
     c = Customer.query.filter_by(id=customer_id, user_id=current_user.id).first()
     if not c: return redirect(url_for("customers"))
     try:
-        amount = float(request.form.get("amount", ""))
+        total_amount = float(request.form.get("total_amount", 0))
+        paid_amount = float(request.form.get("paid_amount", 0))
         txn_date = datetime.strptime(request.form.get("txn_date", ""), "%Y-%m-%d").date() if request.form.get("txn_date") else date.today()
-        t = Transaction(customer_id=c.id, ttype=request.form.get("ttype").strip().upper(), amount=amount, note=request.form.get("note"), ref_no=request.form.get("ref_no"), txn_date=txn_date)
+        tracking_url = request.form.get("tracking_url", "").strip() or None
+        t = Transaction(customer_id=c.id, total_amount=total_amount, paid_amount=paid_amount, note=request.form.get("note"), ref_no=request.form.get("ref_no"), tracking_url=tracking_url, txn_date=txn_date)
         db.session.add(t)
         db.session.commit()
-        flash("Entry added.", "success")
-    except Exception:
-        flash("Invalid input. Please check your data.", "danger")
+    except Exception: pass
     return redirect(url_for("customer_detail", customer_id=customer_id))
 
 @app.post("/txn/<int:txn_id>/delete")
 @login_required
 def txn_delete(txn_id):
     t = db.session.get(Transaction, txn_id)
-    if t and t.customer.user_id == current_user.id: # Security check
+    if t and t.customer.user_id == current_user.id:
         c_id = t.customer_id
         db.session.delete(t)
         db.session.commit()
-        flash("Transaction deleted.", "success")
         return redirect(url_for("customer_detail", customer_id=c_id))
     return redirect(url_for("customers"))
 
-# ---------------- Export ----------------
 @app.get("/export/customers.csv")
 @login_required
 def export_customers():
     customers_list = Customer.query.filter_by(user_id=current_user.id).order_by(Customer.created_at.desc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["CustomerID", "Name", "Phone", "Address", "Balance(Due)"])
-    for c in customers_list: writer.writerow([c.id, c.name, c.phone or "", c.address or "", customer_balance(c)])
+    writer.writerow(["Name", "Phone", "PIN", "Balance(Due)"])
+    for c in customers_list: writer.writerow([c.name, c.phone, c.pin, customer_balance(c)])
     mem = io.BytesIO()
     mem.write(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
-    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="my_customers_ledger.csv")
+    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="my_customers.csv")
