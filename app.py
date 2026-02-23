@@ -11,10 +11,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
-# --------- SECRET KEY ---------
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+# ==========================================
+# 🛑 यहाँ अपनी दुकान की डिटेल्स डालें 🛑
+# ==========================================
+SHOP_UPI_ID = "9415712175@ybl"  # उदाहरण: 9876543210@paytm या okicici
+SHOP_WHATSAPP = "919415712175"              # अपना WhatsApp नंबर डालें (शुरुआत में 91 जरूर लगाएं)
+# ==========================================
 
-# --------- DATABASE URL ---------
+# --------- SECRET KEY & DB ---------
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 db_url = os.environ.get("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -23,7 +28,6 @@ app.config["SQLALCHEMY_DATABASE_URI"] = db_url or "sqlite:///ledger.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
-
 login_manager = LoginManager()
 login_manager.login_view = "login"
 login_manager.init_app(app)
@@ -127,7 +131,6 @@ BASE = """
 def page(body):
     return render_template_string(BASE, body=body, current_user=current_user, session=session)
 
-# ---------------- MAGIC RESET ROUTE (Fixes 500 Error) ----------------
 @app.get("/force-reset-db")
 def force_reset_db():
     db.drop_all()
@@ -141,7 +144,6 @@ def daily_report():
     today = date.today()
     customers = Customer.query.filter_by(user_id=current_user.id).all()
     customer_ids = [c.id for c in customers]
-    
     today_txns = Transaction.query.filter(Transaction.customer_id.in_(customer_ids), Transaction.txn_date == today).all()
     
     total_kaam = sum(t.total_amount for t in today_txns)
@@ -153,18 +155,9 @@ def daily_report():
       <div class="card-header bg-info text-white"><h4 class="mb-0">📈 आज की रिपोर्ट ({today.strftime('%d-%m-%Y')})</h4></div>
       <div class="card-body text-center">
         <div class="row">
-          <div class="col-md-4">
-            <h5 class="text-muted">कुल काम हुआ</h5>
-            <h2 class="text-primary">₹ {total_kaam:.2f}</h2>
-          </div>
-          <div class="col-md-4">
-            <h5 class="text-muted">आज कैश/ऑनलाइन आया</h5>
-            <h2 class="text-success">₹ {total_cash_aaya:.2f}</h2>
-          </div>
-          <div class="col-md-4">
-            <h5 class="text-muted">आज का उधार</h5>
-            <h2 class="text-danger">₹ {total_udhar_aaj:.2f}</h2>
-          </div>
+          <div class="col-md-4"><h5 class="text-muted">कुल काम हुआ</h5><h2 class="text-primary">₹ {total_kaam:.2f}</h2></div>
+          <div class="col-md-4"><h5 class="text-muted">आज कैश/ऑनलाइन आया</h5><h2 class="text-success">₹ {total_cash_aaya:.2f}</h2></div>
+          <div class="col-md-4"><h5 class="text-muted">आज का उधार</h5><h2 class="text-danger">₹ {total_udhar_aaj:.2f}</h2></div>
         </div>
       </div>
     </div>
@@ -216,8 +209,8 @@ def login():
       </div></div>
       <div class="card shadow-sm bg-primary text-white"><div class="card-body text-center">
         <h5>Are you a Customer?</h5>
-        <p class="mb-2">View your account balance and history.</p>
-        <a href="{{ url_for('portal_login') }}" class="btn btn-light w-100">Customer Login</a>
+        <p class="mb-2">अपना बकाया बिल और खाते की जानकारी देखें।</p>
+        <a href="{{ url_for('portal_login') }}" class="btn btn-light w-100 fw-bold">Customer Login</a>
       </div></div>
     </div></div>
     """
@@ -254,11 +247,11 @@ def portal_login():
             flash("Invalid Mobile Number or PIN. Please ask shop owner.", "danger")
     body = """
     <div class="row justify-content-center"><div class="col-md-6 col-lg-5"><div class="card shadow-sm border-primary"><div class="card-body">
-      <h4 class="mb-3 text-primary">Customer Portal Login</h4>
+      <h4 class="mb-3 text-primary text-center">Customer Portal Login</h4>
       <form method="post">
         <div class="mb-3"><label class="form-label">Mobile Number</label><input class="form-control" name="phone" placeholder="e.g. 9876543210" required></div>
         <div class="mb-3"><label class="form-label">4-Digit PIN</label><input class="form-control" type="password" name="pin" placeholder="Default is usually 1234" required></div>
-        <button class="btn btn-primary w-100">View My Khata</button>
+        <button class="btn btn-primary w-100 fw-bold">View My Khata</button>
       </form>
       <div class="mt-3 text-center"><a href="{{ url_for('login') }}">Back to Admin Login</a></div>
     </div></div></div></div>
@@ -275,7 +268,23 @@ def portal_dashboard():
         return redirect(url_for("portal_login"))
 
     bal = customer_balance(c)
-    badge = (f'<span class="badge text-bg-danger fs-5">Amount Due: ₹ {bal}</span>' if bal > 0 else f'<span class="badge text-bg-success fs-5">Advance: ₹ {-bal}</span>' if bal < 0 else f'<span class="badge text-bg-secondary fs-5">Balanced: ₹ 0</span>')
+    
+    # --- ONLINE PAYMENT BUTTON LOGIC ---
+    pay_btn = ""
+    if bal > 0:
+        # Generate UPI Link
+        upi_link = f"upi://pay?pa={SHOP_UPI_ID}&pn=Manglam%20Online%20Services&am={bal}&cu=INR"
+        pay_btn = f'<a href="{upi_link}" class="btn btn-success fw-bold px-4 py-2 mt-2 shadow-sm"><img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/UPI-Logo-vector.svg" height="20" class="me-2"> Pay ₹{bal} Online</a>'
+        badge = f'<span class="badge text-bg-danger fs-5">Amount Due: ₹ {bal}</span><br>{pay_btn}'
+    elif bal < 0:
+        badge = f'<span class="badge text-bg-success fs-5">Advance: ₹ {-bal}</span>'
+    else:
+        badge = f'<span class="badge text-bg-secondary fs-5">Balanced: ₹ 0</span>'
+
+    # --- UPLOAD DOCS / NEW WORK LOGIC ---
+    doc_msg = urllib.parse.quote(f"नमस्ते मंगलम ऑनलाइन, मैं {c.name} हूँ। मुझे एक नया काम कराना है। मैं अपने डाक्यूमेंट्स (आधार/फोटो) भेज रहा/रही हूँ।")
+    doc_link = f"https://wa.me/{SHOP_WHATSAPP}?text={doc_msg}"
+    doc_btn = f'<a href="{doc_link}" target="_blank" class="btn btn-outline-primary fw-bold mt-3"><span style="font-size:1.2rem;">📝</span> नया काम दें & डाक्यूमेंट्स (Aadhaar/Photo) अपलोड करें</a>'
 
     txns_rb = running_balances(c.transactions)
     rows = []
@@ -290,7 +299,8 @@ def portal_dashboard():
       <div class="card-body text-center">
         <h2 class="mb-1">Namaste, {c.name}</h2>
         <p class="text-muted mb-3">Shop: {c.admin.username}</p>
-        <div>{badge}</div>
+        <div class="mb-3">{badge}</div>
+        <div>{doc_btn}</div>
       </div>
     </div>
     <h4 class="mb-3">Your Transaction History</h4>
@@ -396,7 +406,7 @@ def customer_detail(customer_id):
 
     wa_btn = ""
     if bal > 0 and phone_clean:
-        msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपके खाते की कुल बकाया राशि: *₹{bal}* है।\n\nआप नीचे दिए गए लिंक पर अपना पिन डालकर अपना पूरा खाता चेक कर सकते हैं:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन (PIN): {c.pin}\n\nकृपया समय पर भुगतान करें।\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
+        msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपके खाते की कुल बकाया राशि: *₹{bal}* है।\n\nआप नीचे दिए गए लिंक पर अपना पिन डालकर अपना पूरा खाता चेक कर सकते हैं और वहीं से ऑनलाइन पेमेंट भी कर सकते हैं:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन (PIN): {c.pin}\n\nकृपया समय पर भुगतान करें।\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
         wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(msg)}"
         wa_btn = f'<a class="btn btn-sm btn-success ms-2" href="{wa_link}" target="_blank">📲 Send Total Due</a>'
 
@@ -408,7 +418,7 @@ def customer_detail(customer_id):
             entry_msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपका कार्य सफलतापूर्वक कर दिया गया है। कार्य का विवरण:\n\n📝 *कार्य (Work):* {t.note or 'N/A'}\n🧾 *कुल बिल (Total Bill):* ₹{t.total_amount}\n✅ *जमा राशि (Paid):* ₹{t.paid_amount}\n⏳ *इस कार्य का बकाया (Due):* ₹{entry_due}\n🔖 *रेफरेंस नंबर (Ref No):* {t.ref_no or 'N/A'}"
             if t.tracking_url:
                 entry_msg += f"\n🌐 *स्टेटस चेक करें:* {t.tracking_url}"
-            entry_msg += f"\n\n📊 *आपका कुल बकाया (Total Balance):* ₹{rb}\n\nअपना पूरा खाता यहाँ देखें:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन: {c.pin}\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
+            entry_msg += f"\n\n📊 *आपका कुल बकाया (Total Balance):* ₹{rb}\n\nअपना पूरा खाता यहाँ देखें और ऑनलाइन पेमेंट करें:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन: {c.pin}\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
             e_wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(entry_msg)}"
             entry_wa_btn = f'<a class="btn btn-sm btn-outline-success mt-1 w-100" href="{e_wa_link}" target="_blank">📲 WhatsApp Slip</a>'
             
@@ -503,4 +513,3 @@ def export_customers():
     mem.write(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="my_customers.csv")
-
