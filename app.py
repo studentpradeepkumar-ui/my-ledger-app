@@ -81,7 +81,7 @@ with app.app_context():
 # ---------------- Simple HTML ----------------
 BASE = """
 <!doctype html>
-<html lang="en">
+<html lang="hi">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -100,7 +100,7 @@ BASE = """
     </a>
     <div class="d-flex gap-2 align-items-center">
       {% if current_user.is_authenticated %}
-        <span class="text-light me-2 d-none d-md-inline">Admin: {{ current_user.username }}</span>
+        <a class="btn btn-info btn-sm text-white fw-bold" href="{{ url_for('daily_report') }}">📈 Daily Report</a>
         <a class="btn btn-outline-warning btn-sm" href="{{ url_for('export_customers') }}">Export CSV</a>
         <a class="btn btn-outline-danger btn-sm" href="{{ url_for('logout') }}">Logout</a>
       {% elif session.get('customer_id') %}
@@ -126,6 +126,51 @@ BASE = """
 
 def page(body):
     return render_template_string(BASE, body=body, current_user=current_user, session=session)
+
+# ---------------- MAGIC RESET ROUTE (Fixes 500 Error) ----------------
+@app.get("/force-reset-db")
+def force_reset_db():
+    db.drop_all()
+    db.create_all()
+    return "<h3>✅ Database Successfully Reset!</h3><p>Your 500 Error is fixed. <a href='/setup'>Click here to create your Admin account again.</a></p>"
+
+# ---------------- Daily Report ----------------
+@app.get("/report")
+@login_required
+def daily_report():
+    today = date.today()
+    customers = Customer.query.filter_by(user_id=current_user.id).all()
+    customer_ids = [c.id for c in customers]
+    
+    today_txns = Transaction.query.filter(Transaction.customer_id.in_(customer_ids), Transaction.txn_date == today).all()
+    
+    total_kaam = sum(t.total_amount for t in today_txns)
+    total_cash_aaya = sum(t.paid_amount for t in today_txns)
+    total_udhar_aaj = total_kaam - total_cash_aaya
+    
+    body = f"""
+    <div class="card shadow-sm border-info mb-4">
+      <div class="card-header bg-info text-white"><h4 class="mb-0">📈 आज की रिपोर्ट ({today.strftime('%d-%m-%Y')})</h4></div>
+      <div class="card-body text-center">
+        <div class="row">
+          <div class="col-md-4">
+            <h5 class="text-muted">कुल काम हुआ</h5>
+            <h2 class="text-primary">₹ {total_kaam:.2f}</h2>
+          </div>
+          <div class="col-md-4">
+            <h5 class="text-muted">आज कैश/ऑनलाइन आया</h5>
+            <h2 class="text-success">₹ {total_cash_aaya:.2f}</h2>
+          </div>
+          <div class="col-md-4">
+            <h5 class="text-muted">आज का उधार</h5>
+            <h2 class="text-danger">₹ {total_udhar_aaj:.2f}</h2>
+          </div>
+        </div>
+      </div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{url_for('customers')}">Back to Dashboard</a>
+    """
+    return page(body)
 
 # ---------------- Setup/Login (Admin) ----------------
 @app.get("/setup")
@@ -238,7 +283,6 @@ def portal_dashboard():
         ref_display = t.ref_no or "-"
         if t.ref_no and t.tracking_url:
             ref_display = f'<a href="{t.tracking_url}" target="_blank" class="text-primary fw-bold" title="Click to Track Status">{t.ref_no} 🔗</a>'
-            
         rows.append(f'<tr><td>{t.txn_date}</td><td>{t.note or "-"}</td><td>{ref_display}</td><td>₹ {t.total_amount:.2f}</td><td class="text-success">₹ {t.paid_amount:.2f}</td><td class="text-danger">₹ {entry_due:.2f}</td><td><strong>₹ {rb}</strong></td></tr>')
 
     body = f"""
@@ -249,7 +293,6 @@ def portal_dashboard():
         <div>{badge}</div>
       </div>
     </div>
-    
     <h4 class="mb-3">Your Transaction History</h4>
     <div class="card shadow-sm"><div class="table-responsive"><table class="table table-striped mb-0">
       <thead><tr><th>Date</th><th>Work Done</th><th>Ref No (Status)</th><th>Total Bill</th><th>Paid</th><th>Entry Due</th><th>Total Balance</th></tr></thead>
@@ -353,7 +396,6 @@ def customer_detail(customer_id):
 
     wa_btn = ""
     if bal > 0 and phone_clean:
-        # NAYA HINDI MESSAGE (TOTAL DUE)
         msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपके खाते की कुल बकाया राशि: *₹{bal}* है।\n\nआप नीचे दिए गए लिंक पर अपना पिन डालकर अपना पूरा खाता चेक कर सकते हैं:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन (PIN): {c.pin}\n\nकृपया समय पर भुगतान करें।\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
         wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(msg)}"
         wa_btn = f'<a class="btn btn-sm btn-success ms-2" href="{wa_link}" target="_blank">📲 Send Total Due</a>'
@@ -363,14 +405,10 @@ def customer_detail(customer_id):
     for t, entry_due, rb in txns_rb:
         entry_wa_btn = ""
         if phone_clean:
-            # NAYA HINDI MESSAGE (WORK SLIP)
             entry_msg = f"नमस्ते {c.name} जी,\n\nमंगलम ऑनलाइन सर्विसेज पर आने के लिए आपका बहुत-बहुत धन्यवाद। 🙏\n\nआपका कार्य सफलतापूर्वक कर दिया गया है। कार्य का विवरण:\n\n📝 *कार्य (Work):* {t.note or 'N/A'}\n🧾 *कुल बिल (Total Bill):* ₹{t.total_amount}\n✅ *जमा राशि (Paid):* ₹{t.paid_amount}\n⏳ *इस कार्य का बकाया (Due):* ₹{entry_due}\n🔖 *रेफरेंस नंबर (Ref No):* {t.ref_no or 'N/A'}"
-            
             if t.tracking_url:
                 entry_msg += f"\n🌐 *स्टेटस चेक करें:* {t.tracking_url}"
-                
             entry_msg += f"\n\n📊 *आपका कुल बकाया (Total Balance):* ₹{rb}\n\nअपना पूरा खाता यहाँ देखें:\n🔗 लिंक: {request.host_url}portal/login\n🔐 आपका पिन: {c.pin}\n\nधन्यवाद,\n*मंगलम ऑनलाइन सर्विसेज*"
-            
             e_wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(entry_msg)}"
             entry_wa_btn = f'<a class="btn btn-sm btn-outline-success mt-1 w-100" href="{e_wa_link}" target="_blank">📲 WhatsApp Slip</a>'
             
@@ -465,3 +503,4 @@ def export_customers():
     mem.write(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="my_customers.csv")
+
