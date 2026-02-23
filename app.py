@@ -340,6 +340,20 @@ def customer_detail(customer_id):
         f'<span class="badge text-bg-secondary fs-6">Balanced: ₹ 0</span>'
     )
 
+    # --- NAYA WHATSAPP BUTTON LOGIC ---
+    wa_btn = ""
+    if bal > 0 and c.phone:
+        import urllib.parse
+        phone_clean = ''.join(filter(str.isdigit, c.phone))
+        # Agar number 10 digit ka hai, toh aage India ka code (91) laga dein
+        if len(phone_clean) == 10:
+            phone_clean = "91" + phone_clean
+        
+        msg = f"Namaste {c.name},\nManglam Online Services par aapka bakaya balance ₹ {bal} hai. Kripya samay par jama karein. \nDhanyawad!"
+        wa_link = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(msg)}"
+        wa_btn = f'<a class="btn btn-sm btn-success ms-2" href="{wa_link}" target="_blank">📲 WhatsApp Karein</a>'
+    # ----------------------------------
+
     txns_rb = running_balances(c.transactions)
     rows = []
     for t, rb in txns_rb:
@@ -367,7 +381,7 @@ def customer_detail(customer_id):
         <div class="text-muted">{c.phone or ""}{" | " + c.address if c.address else ""}</div>
       </div>
       <div class="text-end">
-        <div class="mb-2">{badge}</div>
+        <div class="mb-2">{badge} {wa_btn}</div>
         <a class="btn btn-sm btn-success" href="{url_for('txn_add', customer_id=c.id)}">+ Add Entry</a>
         <form class="d-inline" method="post" action="{url_for('customer_delete', customer_id=c.id)}" onsubmit="return confirm('Delete customer? All transactions will be deleted.');">
           <button class="btn btn-sm btn-outline-danger">Delete</button>
@@ -388,7 +402,6 @@ def customer_detail(customer_id):
     <div class="mt-3"><a class="btn btn-outline-secondary" href="{url_for('customers')}">Back</a></div>
     """
     return page(body, authed=True)
-
 @app.post("/customer/<int:customer_id>/delete")
 @login_required
 def customer_delete(customer_id):
@@ -522,3 +535,4 @@ def export_customers():
     mem.seek(0)
 
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="customers_ledger.csv")
+
