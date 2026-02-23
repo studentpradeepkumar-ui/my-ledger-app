@@ -82,13 +82,23 @@ BASE = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Customer Ledger</title>
+  <title>Manglam Online Services</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .navbar-brand img {
+        height: 40px; /* Logo ka size yahan se control hoga */
+        margin-right: 10px;
+        border-radius: 5px;
+    }
+  </style>
 </head>
 <body class="bg-light">
 <nav class="navbar navbar-dark bg-dark">
   <div class="container">
-    <a class="navbar-brand" href="{{ url_for('customers') }}">Customer Ledger</a>
+    <a class="navbar-brand d-flex align-items-center" href="{{ url_for('customers') }}">
+      <img src="https://i.postimg.cc/rwVBbrCf/Chat-GPT-Image-Feb-23-2026-06-20-16-PM.png" alt="Manglam Logo">
+      Manglam Online Services
+    </a>
     {% if authed %}
       <div class="d-flex gap-2">
         <a class="btn btn-outline-warning btn-sm" href="{{ url_for('export_customers') }}">Export CSV</a>
@@ -510,4 +520,5 @@ def export_customers():
     mem = io.BytesIO()
     mem.write(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
+
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="customers_ledger.csv")
