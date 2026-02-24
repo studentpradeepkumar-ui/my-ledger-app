@@ -164,7 +164,7 @@ def daily_report():
         </div>
       </div>
     </div>
-    <a class="btn btn-outline-secondary shadow-sm" href="{url_for('customers')}">Back to Dashboard</a>
+    <a class="btn btn-outline-secondary shadow-sm" href="/customers">Back to Dashboard</a>
     """
     return page(body)
 
@@ -179,7 +179,7 @@ def setup():
         <div class="mb-3"><label class="form-label fw-bold">Password</label><input class="form-control form-control-lg" type="password" name="password" required></div>
         <button class="btn btn-primary btn-lg w-100 fw-bold shadow-sm">Create Account</button>
       </form>
-      <div class="mt-3 text-center"><a href="{{ url_for('login') }}" class="text-decoration-none">Already have an account? Login here</a></div>
+      <div class="mt-3 text-center"><a href="/login" class="text-decoration-none">Already have an account? Login here</a></div>
     </div></div></div></div>
     """
     return page(body)
@@ -208,12 +208,12 @@ def login():
           <div class="mb-4"><label class="form-label fw-bold text-muted">Password</label><input class="form-control form-control-lg bg-light" type="password" name="password" required></div>
           <button class="btn btn-primary btn-lg w-100 fw-bold shadow-sm">🔑 Secure Login</button>
         </form>
-        <div class="mt-3 text-center"><a href="{{ url_for('setup') }}" class="text-decoration-none">Create Admin Account</a></div>
+        <div class="mt-3 text-center"><a href="/setup" class="text-decoration-none">Create Admin Account</a></div>
       </div></div>
       <div class="card shadow border-0 bg-primary text-white rounded-4 hover-shadow"><div class="card-body text-center p-4">
         <h4 class="fw-bold">Are you a Customer?</h4>
         <p class="mb-3 text-white-50">अपना बकाया बिल और खाते की जानकारी देखें।</p>
-        <a href="{{ url_for('portal_login') }}" class="btn btn-light btn-lg w-100 fw-bold text-primary shadow-sm">📱 Customer Login</a>
+        <a href="/portal/login" class="btn btn-light btn-lg w-100 fw-bold text-primary shadow-sm">📱 Customer Login</a>
       </div></div>
     </div></div>
     """
@@ -236,7 +236,7 @@ def logout():
     logout_user()
     return redirect(url_for("login"))
 
-# ---------------- Customer Portal (NEW BEAUTIFUL DESIGN) ----------------
+# ---------------- Customer Portal ----------------
 @app.route("/portal/login", methods=["GET", "POST"])
 def portal_login():
     if request.method == "POST":
@@ -293,7 +293,7 @@ def portal_login():
             </form>
             <hr class="my-4">
             <div class="text-center">
-                <a href="{{ url_for('login') }}" class="text-decoration-none text-muted small fw-bold">⚙️ दुकानदार लॉगिन (Admin Login)</a>
+                <a href="/login" class="text-decoration-none text-muted small fw-bold">⚙️ दुकानदार लॉगिन (Admin Login)</a>
             </div>
           </div>
         </div>
@@ -509,9 +509,6 @@ def txn_add(customer_id):
     c = Customer.query.filter_by(id=customer_id, user_id=current_user.id).first()
     if not c: return redirect(url_for("customers"))
     
-    # ====================================================
-    # ⚙️ यहाँ आप अपनी सर्विसेस के नाम, पैसे और वेबसाइट लिंक बदल सकते हैं
-    # ====================================================
     services = [
         ("आय प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrictup/camp/TrackStatus.aspx"),
         ("जाति प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrictup/camp/TrackStatus.aspx"),
