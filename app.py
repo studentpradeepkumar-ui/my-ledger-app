@@ -14,8 +14,8 @@ app = Flask(__name__)
 # ==========================================
 # 🛑 यहाँ अपनी दुकान की डिटेल्स डालें 🛑
 # ==========================================
-SHOP_UPI_ID = "आपका_UPI_ID_यहाँ_डालें@paytm"  # उदाहरण: 9876543210@paytm
-SHOP_WHATSAPP = "919876543210"              # अपना WhatsApp नंबर डालें
+SHOP_UPI_ID = "9415712175@ybl"  # उदाहरण: 9876543210@paytm
+SHOP_WHATSAPP = "919415712175"              # अपना WhatsApp नंबर डालें
 # ==========================================
 
 # --------- SECRET KEY & DB ---------
@@ -510,18 +510,18 @@ def txn_add(customer_id):
     if not c: return redirect(url_for("customers"))
     
     services = [
-        ("आय प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrictup/camp/TrackStatus.aspx"),
-        ("जाति प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrictup/camp/TrackStatus.aspx"),
-        ("निवास प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrictup/camp/TrackStatus.aspx"),
-        ("वोटर आईडी", 50, "https://trackers.eci.gov.in/"),
-        ("पैन कार्ड", 150, "https://tin.tin.nsdl.com/pantan/StatusTrack.html"),
-        ("पासपोर्ट", 1500, "https://portal1.passportindia.gov.in/AppOnlineProject/statusTracker/trackStatusInpNew"),
-        ("पीएम किसान सम्मान निधि", 50, "https://pmkisan.gov.in/"),
-        ("फार्मर रजिस्ट्री", 50, "https://upagriculture.com/"),
-        ("आधार कार्ड संशोधन", 100, "https://myaadhaar.uidai.gov.in/CheckAadhaarStatus"),
-        ("वरासत", 150, "https://vaad.up.nic.in/"),
-        ("राशन कार्ड", 50, "https://fcs.up.gov.in/"),
-        ("ड्राइविंग लाइसेंस", 500, "https://parivahan.gov.in/rcdlstatus/")
+        ("आय प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrict/showStatushome.aspx?application_no="),
+        ("जाति प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrict/showStatushome.aspx?application_no="),
+        ("निवास प्रमाण पत्र", 100, "https://edistrict.up.gov.in/edistrict/showStatushome.aspx?application_no="),
+        ("वोटर आईडी", 150, "https://voters.eci.gov.in/home/track/"),
+        ("पैन कार्ड", 200, "https://trackpan.utiitsl.com/PANONLINE/forms/TrackPan/trackApp"),
+        ("पासपोर्ट", 1700, "https://portal1.passportindia.gov.in/AppOnlineProject/statusTracker/trackStatusInpNew"),
+        ("पीएम किसान सम्मान निधि", 100, "https://pmkisan.gov.in/"),
+        ("फार्मर रजिस्ट्री", 100, "https://upfr.agristack.gov.in/farmer-registry-up/#/checkEnrolmentStatus/"),
+        ("आधार कार्ड संशोधन", 150, "https://myaadhaar.uidai.gov.in/CheckAadhaarStatus/en"),
+        ("वरासत", 150, "https://rccms.up.gov.in/Varasat/searchApplication/"),
+        ("राशन कार्ड", 100, "https://nfsa.up.gov.in/Food/TrackingRationCard/TrackApplication.aspx/"),
+        ("ड्राइविंग लाइसेंस", 3500, "https://parivahan.gov.in/rcdlstatus/?pur_cd=101/")
     ]
     
     cb_html = ""
@@ -676,3 +676,4 @@ def export_customers():
     mem.write(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="my_customers.csv")
+
